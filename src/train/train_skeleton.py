@@ -1,9 +1,10 @@
 # src/train/train_skeleton.py
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 import torch.nn as nn
 from torch.optim import AdamW
 from pathlib import Path
+from collections import Counter
 
 from src.data.dataset_skeleton import SkeletonDataset
 from src.models.lstm_skeleton import SkeletonLSTM
@@ -29,6 +30,16 @@ def train_skeleton_model():
 
     train_loader = DataLoader(train_ds, batch_size=48, shuffle=True, num_workers=2)
     val_loader = DataLoader(val_ds, batch_size=48, shuffle=False, num_workers=2)
+
+    # Use WeightedRandomSampler to oversample minority classes (especially loitering)
+    labels = [train_ds[i][1] for i in range(len(train_ds))]
+    class_counts = Counter(labels)
+    class_weights = {cls_idx: len(train_ds) / (len(class_counts) * count) 
+                     for cls_idx, count in class_counts.items()}
+    sample_weights = [class_weights[label] for label in labels]
+    sampler = WeightedRandomSampler(sample_weights, len(train_ds), replacement=True)
+    
+    train_loader = DataLoader(train_ds, batch_size=48, sampler=sampler, num_workers=2)
 
     # Calculate class weights to handle imbalance
     # From dataset analysis: normal=41.4%, fighting=35.1%, falling=18.4%, loitering=5.2%
