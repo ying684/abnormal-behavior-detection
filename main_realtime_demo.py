@@ -1,4 +1,10 @@
 # main_realtime_demo.py
+import sys
+from pathlib import Path
+
+# Add project root to path for imports (works both locally and in Colab)
+sys.path.insert(0, str(Path(__file__).parent))
+
 from src.inference.realtime_pipeline import RealtimeBehaviorRecognizer
 
 def main():
