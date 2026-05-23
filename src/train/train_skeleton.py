@@ -18,13 +18,13 @@ def train_skeleton_model():
         root_dir="data/processed/sequences",
         classes=classes,
         split="train",
-        seq_len=15
+        seq_len=20
     )
     val_ds = SkeletonDataset(
         root_dir="data/processed/sequences",
         classes=classes,
         split="val",
-        seq_len=15
+        seq_len=20
     )
 
     train_loader = DataLoader(train_ds, batch_size=32, shuffle=True, num_workers=2)
@@ -44,7 +44,7 @@ def train_skeleton_model():
     weights_dir = Path("weights")
     weights_dir.mkdir(parents=True, exist_ok=True)
 
-    num_epochs = 12  # đủ cho hôm nay
+    num_epochs = 15  # đủ nhanh và hợp lý
 
     for epoch in range(1, num_epochs+1):
         model.train()
