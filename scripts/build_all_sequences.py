@@ -30,16 +30,39 @@ def main():
 
         all_videos = list(class_dir.glob("*.mp4"))
         video_files = all_videos[:max_videos_per_class]
-        print(f"[{cls}] Processing {len(video_files)}/{len(all_videos)} videos")
+        
+        # Skip already processed videos
+        processed_count = 0
+        skipped_count = 0
+        for video_file in video_files:
+            # Check if this video has any sequences already saved
+            existing_seqs = list(out_dir.glob(f"{video_file.stem}_*.npy"))
+            if existing_seqs:
+                skipped_count += 1
+                continue
+            processed_count += 1
+        
+        print(f"[{cls}] Processing {processed_count} new / {len(video_files)} total videos (skipped {skipped_count} already processed)")
         
         for video_file in video_files:
+            # Skip if already processed
+            existing_seqs = list(out_dir.glob(f"{video_file.stem}_*.npy"))
+            if existing_seqs:
+                continue
+                
             print(f"[{cls}] Processing {video_file.name}")
-            builder.build_sequences_for_video(
-                video_path=str(video_file),
-                save_dir=str(out_dir),
-                min_len=20
-                # Bỏ max_len để giữ toàn bộ info, nhưng chia nhỏ sequences
-            )
+            try:
+                builder.build_sequences_for_video(
+                    video_path=str(video_file),
+                    save_dir=str(out_dir),
+                    min_len=20
+                    # Bỏ max_len để giữ toàn bộ info, nhưng chia nhỏ sequences
+                )
+            except KeyboardInterrupt:
+                print(f"\n[INTERRUPTED] Saved {sum(len(list(Path('data/processed/sequences') / cls).glob('*.npy')) for cls in classes)} sequences total")
+                raise
+            except Exception as e:
+                print(f"[ERROR] Failed to process {video_file.name}: {e}")
 
 if __name__ == "__main__":
     main()
