@@ -28,8 +28,9 @@ def main():
         out_dir = Path("data/processed/sequences") / cls
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        video_files = list(class_dir.glob("*.mp4"))[:max_videos_per_class]
-        print(f"[{cls}] Processing {len(video_files)}/{len(class_dir.glob('*.mp4'))} videos")
+        all_videos = list(class_dir.glob("*.mp4"))
+        video_files = all_videos[:max_videos_per_class]
+        print(f"[{cls}] Processing {len(video_files)}/{len(all_videos)} videos")
         
         for video_file in video_files:
             print(f"[{cls}] Processing {video_file.name}")
