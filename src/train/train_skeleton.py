@@ -32,14 +32,15 @@ def train_skeleton_model():
 
     model = SkeletonLSTM(
         input_size=34,
-        hidden_size=96,
-        num_layers=1,
-        num_classes=len(classes)
+        hidden_size=128,
+        num_layers=2,
+        num_classes=len(classes),
+        dropout=0.2  # Dropout only works with num_layers >= 2
     ).to(device)
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = AdamW(model.parameters(), lr=1.5e-3, weight_decay=1e-5)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
+    optimizer = AdamW(model.parameters(), lr=2e-3, weight_decay=1e-5)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=12, eta_min=1e-5)
 
     best_val_acc = 0.0
     weights_dir = Path("weights")
