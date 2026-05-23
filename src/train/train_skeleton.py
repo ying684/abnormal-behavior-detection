@@ -46,7 +46,7 @@ def train_skeleton_model():
     weights_dir = Path("weights")
     weights_dir.mkdir(parents=True, exist_ok=True)
 
-    num_epochs = 12  # Balance: nhanh + đủ để hội tụ
+    num_epochs = 25  # More time to learn properly
 
     for epoch in range(1, num_epochs+1):
         model.train()
