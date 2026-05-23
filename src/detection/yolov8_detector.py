@@ -9,12 +9,6 @@ class PersonDetector:
         self.device = device
 
     def detect_persons(self, frame, conf_thres: float = 0.4) -> List[Dict]:
-        """
-        Input:
-            frame: BGR image (H,W,3)
-        Output:
-            list of dict: { 'bbox': [x1,y1,x2,y2], 'conf': float }
-        """
         results = self.model.predict(
             frame,
             conf=conf_thres,
@@ -28,7 +22,7 @@ class PersonDetector:
 
         for box in results.boxes:
             cls_id = int(box.cls[0])
-            if cls_id != 0:  # 0 = person
+            if cls_id != 0:
                 continue
             x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
             conf = float(box.conf[0])

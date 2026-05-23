@@ -2,99 +2,156 @@
 import cv2
 import numpy as np
 from pathlib import Path
-from collections import defaultdict
+from tqdm import tqdm
+from ultralytics import YOLO
+import torch
 
-from src.detection.tracker import PersonTracker
-from src.detection.pose_estimator import PoseEstimator
+class FastSequenceBuilder:
+    """
+    Tối ưu build skeleton sequences:
+    - Batch inference với YOLO
+    - Skip frame (lấy 1 frame mỗi N frame)
+    - Multiprocessing
+    """
 
-def _iou(b1, b2):
-    x1 = max(b1[0], b2[0])
-    y1 = max(b1[1], b2[1])
-    x2 = min(b1[2], b2[2])
-    y2 = min(b1[3], b2[3])
-    inter = max(0, x2-x1) * max(0, y2-y1)
-    a1 = max(0, b1[2]-b1[0]) * max(0, b1[3]-b1[1])
-    a2 = max(0, b2[2]-b2[0]) * max(0, b2[3]-b2[1])
-    union = a1 + a2 - inter
-    if union <= 0:
-        return 0.0
-    return inter / union
+    def __init__(self, pose_weight: str, device: str = "cuda"):
+        self.model = YOLO(pose_weight)
+        self.model.to(device)
+        self.device = device
 
-class SequenceBuilder:
-    def __init__(self, yolo_weight: str, pose_weight: str, device: str = "cuda"):
-        self.tracker = PersonTracker(yolo_weight, device)
-        self.pose_model = PoseEstimator(pose_weight, device)
-
-    def build_sequences_for_video(self, video_path: str, save_dir: str, min_len: int = 20):
+    def build_sequence_for_video(self,
+                                  video_path: str,
+                                  save_path: str,
+                                  frame_skip: int = 2,
+                                  max_frames: int = 150,
+                                  min_len: int = 15):
         """
-        - Track persons
-        - Pose estimation
-        - Gán keypoints cho mỗi track_id
-        - Lưu mỗi (video, track_id) -> .npy (T,17,3)
+        frame_skip: lấy 1 frame mỗi N frame (skip=2 -> 1,3,5,7...)
+        max_frames: tối đa bao nhiêu frame sau khi skip
+        min_len: độ dài tối thiểu sequence
+        
+        Với skip=2, max_frames=150:
+        - Tối đa 300 frame gốc
+        - Khoảng 10 giây @30fps
+        - Đủ thấy hành vi
         """
-        video_path = Path(video_path)
-        save_dir = Path(save_dir)
-        save_dir.mkdir(parents=True, exist_ok=True)
-
-        cap = cv2.VideoCapture(str(video_path))
+        cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
-            print(f"[WARN] Cannot open video {video_path}")
-            return
+            return False
 
-        all_tracks = defaultdict(list)  # track_id -> list[keypoints or None]
-        track_gen = self.tracker.track_stream(str(video_path))
+        frames = []
+        frame_idx = 0
 
-        for dets in track_gen:
+        # Lấy frames (skip)
+        while True:
             ret, frame = cap.read()
             if not ret:
                 break
 
-            persons_pose = self.pose_model.estimate(frame)
-
-            for d in dets:
-                tid = d["track_id"]
-                bbox = d["bbox"]
-                best_kp = None
-                best_i = 0.0
-                for p in persons_pose:
-                    i = _iou(bbox, p["bbox"])
-                    if i > best_i:
-                        best_i = i
-                        best_kp = p["keypoints"]
-
-                if best_kp is not None and best_i > 0.5:
-                    all_tracks[tid].append(best_kp)
-                else:
-                    all_tracks[tid].append(None)
+            if frame_idx % frame_skip == 0:
+                frames.append(frame)
+                if len(frames) >= max_frames:
+                    break
+            frame_idx += 1
 
         cap.release()
 
-        for tid, kp_list in all_tracks.items():
-            T = len(kp_list)
-            if T < min_len:
-                continue
+        if len(frames) < min_len:
+            return False
 
-            # Count tracking losses (None values)
-            none_count = sum(1 for kp in kp_list if kp is None)
-            loss_rate = none_count / T
-            
-            # Skip sequences with >30% tracking loss (bad quality)
-            if loss_rate > 0.3:
-                print(f"  ⚠️ Skipped sequence (loss_rate={loss_rate:.1%} > 30%), length={T}")
-                continue
+        # Batch inference YOLO-Pose
+        keypoints_list = []
+        batch_size = 8  # xử lý 8 frame cùng lúc
 
-            kp_array = np.zeros((T, 17, 3), dtype=np.float32)
-            last_valid = None
-            for t in range(T):
-                if kp_list[t] is not None:
-                    kp_array[t] = kp_list[t]
-                    last_valid = kp_list[t]
-                else:
-                    if last_valid is not None:
-                        kp_array[t] = last_valid
+        for batch_start in range(0, len(frames), batch_size):
+            batch_frames = frames[batch_start:batch_start + batch_size]
+
+            results = self.model.predict(
+                batch_frames,
+                device=self.device,
+                verbose=False,
+                conf=0.5,
+                iou=0.45
+            )
+
+            for result in results:
+                if result.keypoints is None or result.boxes is None:
+                    # Nếu frame này không detect ai, dùng frame trước
+                    if keypoints_list:
+                        keypoints_list.append(keypoints_list[-1])
+                    continue
+
+                boxes = result.boxes.xyxy.cpu().numpy()
+                kps_xy = result.keypoints.xy.cpu().numpy()
+                kps_conf = result.keypoints.conf.cpu().numpy()
+
+                if len(boxes) == 0:
+                    if keypoints_list:
+                        keypoints_list.append(keypoints_list[-1])
+                    continue
+
+                # Chọn person lớn nhất
+                areas = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
+                main_idx = np.argmax(areas)
+
+                kp_xy = kps_xy[main_idx]
+                kp_c = kps_conf[main_idx][:, None]
+                keypoints = np.concatenate([kp_xy, kp_c], axis=1)
+                keypoints_list.append(keypoints)
+
+        if len(keypoints_list) < min_len:
+            return False
+
+        seq = np.stack(keypoints_list, axis=0)  # (T,17,3)
+        np.save(save_path, seq)
+        return True
+
+    def build_for_class_folder(self,
+                               class_dir: str,
+                               out_dir: str,
+                               frame_skip: int = 2,
+                               max_frames: int = 150,
+                               min_len: int = 15,
+                               n_workers: int = 4):
+        """
+        n_workers: số process chạy song song
+        """
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+
+        class_dir = Path(class_dir)
+        out_dir = Path(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        video_files = list(class_dir.glob("*.mp4"))
+        if not video_files:
+            print(f"[WARN] No videos in {class_dir}")
+            return
+
+        print(f"[{class_dir.name}] {len(video_files)} videos, {n_workers} workers")
+
+        def process_video(vf):
+            out_path = out_dir / (vf.stem + ".npy")
+            success = self.build_sequence_for_video(
+                str(vf),
+                str(out_path),
+                frame_skip=frame_skip,
+                max_frames=max_frames,
+                min_len=min_len
+            )
+            return vf.name, success
+
+        # Multiprocessing
+        with ProcessPoolExecutor(max_workers=n_workers) as executor:
+            futures = {
+                executor.submit(process_video, vf): vf
+                for vf in video_files
+            }
+            for future in tqdm(as_completed(futures), total=len(futures), desc=class_dir.name):
+                try:
+                    fname, success = future.result()
+                    if success:
+                        print(f"✓ {fname}")
                     else:
-                        kp_array[t] = 0.0
-
-            out_name = f"{video_path.stem}_id{tid}.npy"
-            np.save(save_dir / out_name, kp_array)
-            print(f"Saved sequence {save_dir/out_name}, length={T}")
+                        print(f"✗ {fname} (skipped - too short)")
+                except Exception as e:
+                    print(f"Error: {e}")

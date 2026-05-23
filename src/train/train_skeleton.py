@@ -1,10 +1,9 @@
 # src/train/train_skeleton.py
 import torch
-from torch.utils.data import DataLoader, WeightedRandomSampler
+from torch.utils.data import DataLoader
 import torch.nn as nn
 from torch.optim import AdamW
 from pathlib import Path
-from collections import Counter
 
 from src.data.dataset_skeleton import SkeletonDataset
 from src.models.lstm_skeleton import SkeletonLSTM
@@ -19,50 +18,33 @@ def train_skeleton_model():
         root_dir="data/processed/sequences",
         classes=classes,
         split="train",
-        seq_len=20
+        seq_len=15
     )
     val_ds = SkeletonDataset(
         root_dir="data/processed/sequences",
         classes=classes,
         split="val",
-        seq_len=20
+        seq_len=15
     )
 
-    train_loader = DataLoader(train_ds, batch_size=48, shuffle=True, num_workers=2)
-    val_loader = DataLoader(val_ds, batch_size=48, shuffle=False, num_workers=2)
+    train_loader = DataLoader(train_ds, batch_size=32, shuffle=True, num_workers=2)
+    val_loader = DataLoader(val_ds, batch_size=32, shuffle=False, num_workers=2)
 
-    # Use WeightedRandomSampler to oversample minority classes (especially loitering)
-    labels = [train_ds[i][1] for i in range(len(train_ds))]
-    class_counts = Counter(labels)
-    class_weights = {cls_idx: len(train_ds) / (len(class_counts) * count) 
-                     for cls_idx, count in class_counts.items()}
-    sample_weights = [class_weights[label] for label in labels]
-    sampler = WeightedRandomSampler(sample_weights, len(train_ds), replacement=True)
-    
-    train_loader = DataLoader(train_ds, batch_size=48, sampler=sampler, num_workers=2)
-
-    # Calculate class weights to handle imbalance
-    # From dataset analysis: normal=41.4%, fighting=35.1%, falling=18.4%, loitering=5.2%
-    class_weights = torch.tensor([1/0.414, 1/0.351, 1/0.184, 1/0.052], dtype=torch.float32).to(device)
-    class_weights = class_weights / class_weights.sum() * len(classes)  # Normalize
-    
     model = SkeletonLSTM(
         input_size=34,
         hidden_size=128,
         num_layers=2,
-        num_classes=len(classes),
-        dropout=0.2  # Dropout only works with num_layers >= 2
+        num_classes=len(classes)
     ).to(device)
 
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
-    optimizer = AdamW(model.parameters(), lr=2e-3, weight_decay=1e-5)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=25, eta_min=1e-5)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
 
     best_val_acc = 0.0
     weights_dir = Path("weights")
     weights_dir.mkdir(parents=True, exist_ok=True)
 
-    num_epochs = 25  # More time to learn properly
+    num_epochs = 12  # đủ cho hôm nay
 
     for epoch in range(1, num_epochs+1):
         model.train()
@@ -100,8 +82,7 @@ def train_skeleton_model():
                 val_samples += x.size(0)
 
         val_acc = val_correct / val_samples if val_samples > 0 else 0.0
-        scheduler.step()  # Update learning rate
-        print(f"Epoch {epoch}/{num_epochs} | train loss {train_loss:.4f} acc {train_acc:.3f} | val acc {val_acc:.3f} | lr {optimizer.param_groups[0]['lr']:.2e}")
+        print(f"Epoch {epoch}/{num_epochs} | train loss {train_loss:.4f} acc {train_acc:.3f} | val acc {val_acc:.3f}")
 
         if val_acc > best_val_acc:
             best_val_acc = val_acc

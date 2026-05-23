@@ -26,7 +26,6 @@ class SkeletonLSTM(nn.Module):
         )
 
     def forward(self, x):
-        # x: (B,T,34)
         out, _ = self.lstm(x)    # (B,T,2H)
         out = out.mean(dim=1)    # (B,2H)
         logits = self.fc(out)    # (B,C)

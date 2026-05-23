@@ -13,10 +13,6 @@ class SkeletonDataset(Dataset):
                  split: str = "train",
                  seq_len: int = 20,
                  augment: bool = False):
-        """
-        root_dir: data/processed/sequences
-        classes: ["normal","fighting","falling","loitering"]
-        """
         self.root_dir = Path(root_dir)
         self.classes = classes
         self.class_to_idx = {c: i for i, c in enumerate(classes)}
@@ -63,7 +59,7 @@ class SkeletonDataset(Dataset):
             pad = np.repeat(seq[-1][None, :, :], self.seq_len - T, axis=0)
             seq = np.concatenate([seq, pad], axis=0)
 
-        seq_xy = seq[:, :, :2]  # (seq_len,17,2)
+        seq_xy = seq[:, :, :2]
         center = seq_xy.mean(axis=1, keepdims=True)
         seq_rel = seq_xy - center
 
@@ -71,7 +67,7 @@ class SkeletonDataset(Dataset):
         if scale > 0:
             seq_rel /= scale
 
-        seq_flat = seq_rel.reshape(self.seq_len, -1)  # (seq_len,34)
+        seq_flat = seq_rel.reshape(self.seq_len, -1)
 
         x = torch.from_numpy(seq_flat).float()
         y = torch.tensor(label, dtype=torch.long)

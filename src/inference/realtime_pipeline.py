@@ -1,42 +1,26 @@
-# src/inference/realtime_pipeline.py
+# src/inference/realtime_simple.py
 import cv2
 import numpy as np
 import torch
-from collections import defaultdict, deque
-from typing import List, Tuple, Dict
+from collections import deque
+from typing import List
 
-from src.detection.tracker import PersonTracker
 from src.detection.pose_estimator import PoseEstimator
 from src.models.lstm_skeleton import SkeletonLSTM
 
-def _iou(b1, b2):
-    x1 = max(b1[0], b2[0])
-    y1 = max(b1[1], b2[1])
-    x2 = min(b1[2], b2[2])
-    y2 = min(b1[3], b2[3])
-    inter = max(0, x2-x1) * max(0, y2-y1)
-    a1 = max(0, b1[2]-b1[0]) * max(0, b1[3]-b1[1])
-    a2 = max(0, b2[2]-b2[0]) * max(0, b2[3]-b2[1])
-    union = a1 + a2 - inter
-    if union <= 0:
-        return 0.0
-    return inter / union
-
-class RealtimeBehaviorRecognizer:
+class SimpleBehaviorRecognizer:
     def __init__(self,
-                 yolo_weight: str,
                  pose_weight: str,
                  lstm_weight: str,
                  classes: List[str],
                  device: str = "cuda",
-                 seq_len: int = 20,
+                 seq_len: int = 15,
                  min_frames_for_decision: int = 10):
         self.device = device if torch.cuda.is_available() else "cpu"
         self.classes = classes
         self.seq_len = seq_len
         self.min_frames_for_decision = min_frames_for_decision
 
-        self.tracker = PersonTracker(yolo_weight, self.device)
         self.pose_model = PoseEstimator(pose_weight, self.device)
 
         self.model = SkeletonLSTM(
@@ -48,9 +32,9 @@ class RealtimeBehaviorRecognizer:
         self.model.load_state_dict(torch.load(lstm_weight, map_location=self.device))
         self.model.eval()
 
-        self.track_skeletons = defaultdict(lambda: deque(maxlen=self.seq_len))
+        self.skeleton_buffer = deque(maxlen=self.seq_len)
 
-    def _preprocess_sequence(self, seq_kp: List[np.ndarray]) -> torch.Tensor:
+    def _preprocess(self, seq_kp: List[np.ndarray]) -> torch.Tensor:
         T = len(seq_kp)
         arr = np.zeros((T, 17, 3), dtype=np.float32)
         for i in range(T):
@@ -59,6 +43,7 @@ class RealtimeBehaviorRecognizer:
         seq_xy = arr[:, :, :2]
         center = seq_xy.mean(axis=1, keepdims=True)
         seq_rel = seq_xy - center
+
         scale = np.linalg.norm(seq_rel, axis=2).max()
         if scale > 0:
             seq_rel /= scale
@@ -86,71 +71,54 @@ class RealtimeBehaviorRecognizer:
             h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             writer = cv2.VideoWriter(save_output, fourcc, fps, (w, h))
 
-        track_iter = self.tracker.track_stream(source)
-
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
 
-            try:
-                dets = next(track_iter)
-            except StopIteration:
-                break
-
             persons_pose = self.pose_model.estimate(frame)
-            current_preds: Dict[int, Tuple[str, float]] = {}
+            if not persons_pose:
+                if display:
+                    cv2.imshow("Simple Behavior Recognition", frame)
+                    if cv2.waitKey(1) & 0xFF == 27:
+                        break
+                continue
 
-            for d in dets:
-                tid = d["track_id"]
-                bbox = d["bbox"]
+            # Chọn person lớn nhất
+            largest = max(persons_pose, 
+                         key=lambda p: (p["bbox"][2]-p["bbox"][0]) * (p["bbox"][3]-p["bbox"][1]))
+            keypoints = largest["keypoints"]
+            self.skeleton_buffer.append(keypoints)
 
-                best_kp = None
-                best_i = 0.0
-                for p in persons_pose:
-                    i = _iou(bbox, p["bbox"])
-                    if i > best_i:
-                        best_i = i
-                        best_kp = p["keypoints"]
+            label, conf = "...", 0.0
+            if len(self.skeleton_buffer) >= self.min_frames_for_decision:
+                x = self._preprocess(list(self.skeleton_buffer))
+                with torch.no_grad():
+                    logits = self.model(x)
+                    probs = torch.softmax(logits, dim=1)[0].cpu().numpy()
+                    cls_id = int(np.argmax(probs))
+                    conf = float(probs[cls_id])
+                    label = self.classes[cls_id]
 
-                if best_kp is not None and best_i > 0.3:
-                    self.track_skeletons[tid].append(best_kp)
+            # Draw
+            x1, y1, x2, y2 = largest["bbox"]
+            color = (0, 255, 0)
+            if label == "fighting":
+                color = (0, 0, 255)
+            elif label == "falling":
+                color = (0, 165, 255)
+            elif label == "loitering":
+                color = (255, 0, 0)
 
-                seq_kp = list(self.track_skeletons[tid])
-                if len(seq_kp) >= self.min_frames_for_decision:
-                    x = self._preprocess_sequence(seq_kp)
-                    with torch.no_grad():
-                        logits = self.model(x)
-                        probs = torch.softmax(logits, dim=1)[0].cpu().numpy()
-                        cls_id = int(np.argmax(probs))
-                        conf = float(probs[cls_id])
-                        label = self.classes[cls_id]
-                    current_preds[tid] = (label, conf)
-                else:
-                    current_preds[tid] = ("...", 0.0)
-
-            for d in dets:
-                tid = d["track_id"]
-                x1, y1, x2, y2 = d["bbox"]
-                label, conf = current_preds.get(tid, ("", 0.0))
-
-                color = (0, 255, 0)
-                if label == "fighting":
-                    color = (0, 0, 255)
-                elif label == "falling":
-                    color = (0, 165, 255)
-                elif label == "loitering":
-                    color = (255, 0, 0)
-
-                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-                txt = f"ID {tid} | {label}"
-                if conf > 0:
-                    txt += f" ({conf:.2f})"
-                cv2.putText(frame, txt, (x1, y1 - 8),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+            txt = f"{label}"
+            if conf > 0:
+                txt += f" ({conf:.2f})"
+            cv2.putText(frame, txt, (x1, y1 - 8),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
             if display:
-                cv2.imshow("Realtime Behavior Recognition", frame)
+                cv2.imshow("Simple Behavior Recognition", frame)
                 if cv2.waitKey(1) & 0xFF == 27:
                     break
 

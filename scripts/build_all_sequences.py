@@ -1,24 +1,16 @@
 # scripts/build_all_sequences.py
-import sys
 from pathlib import Path
-
-# Add project root to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from src.data.sequence_builder import SequenceBuilder
+from src.data.sequence_builder import FastSequenceBuilder
 
 def main():
     root_raw = Path("data/raw")
     classes = ["normal", "fighting", "falling", "loitering"]
 
-    builder = SequenceBuilder(
-        yolo_weight="weights/yolov8s.pt",
+    builder = FastSequenceBuilder(
         pose_weight="weights/yolov8s-pose.pt",
         device="cuda"
     )
 
-    max_videos_per_class = 50  # Increased from 25 (will filter out bad quality ones)
-    
     for cls in classes:
         class_dir = root_raw / cls
         if not class_dir.exists():
@@ -26,42 +18,16 @@ def main():
             continue
 
         out_dir = Path("data/processed/sequences") / cls
-        out_dir.mkdir(parents=True, exist_ok=True)
 
-        all_videos = list(class_dir.glob("*.mp4"))
-        video_files = all_videos[:max_videos_per_class]
-        
-        # Skip already processed videos
-        processed_count = 0
-        skipped_count = 0
-        for video_file in video_files:
-            # Check if this video has any sequences already saved
-            existing_seqs = list(out_dir.glob(f"{video_file.stem}_*.npy"))
-            if existing_seqs:
-                skipped_count += 1
-                continue
-            processed_count += 1
-        
-        print(f"[{cls}] Processing {processed_count} new / {len(video_files)} total videos (skipped {skipped_count} already processed)")
-        
-        for video_file in video_files:
-            # Skip if already processed
-            existing_seqs = list(out_dir.glob(f"{video_file.stem}_*.npy"))
-            if existing_seqs:
-                continue
-                
-            print(f"[{cls}] Processing {video_file.name}")
-            try:
-                builder.build_sequences_for_video(
-                    video_path=str(video_file),
-                    save_dir=str(out_dir),
-                    min_len=30  # Increased from 20 for better quality
-                )
-            except KeyboardInterrupt:
-                print(f"\n[INTERRUPTED] Saved {sum(len(list(Path('data/processed/sequences') / cls).glob('*.npy')) for cls in classes)} sequences total")
-                raise
-            except Exception as e:
-                print(f"[ERROR] Failed to process {video_file.name}: {e}")
+        print(f"\n=== Building {cls} ===")
+        builder.build_for_class_folder(
+            class_dir=str(class_dir),
+            out_dir=str(out_dir),
+            frame_skip=2,           # lấy 1 frame mỗi 2 frame (giảm 50% từ số frame)
+            max_frames=150,         # tối đa 150 frame sau skip = khoảng 10 giây
+            min_len=15,             # tối thiểu 15 frame (~1 giây)
+            n_workers=4             # 4 video song song
+        )
 
 if __name__ == "__main__":
     main()

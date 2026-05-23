@@ -1,32 +1,21 @@
-# main_realtime_demo.py
-import sys
-from pathlib import Path
-
-# Add project root to path for imports (works both locally and in Colab)
-sys.path.insert(0, str(Path(__file__).parent))
-
-from src.inference.realtime_pipeline import RealtimeBehaviorRecognizer
+# main_realtime_simple.py
+from src.inference.realtime_simple import SimpleBehaviorRecognizer
 
 def main():
-    yolo_weight = "weights/yolov8s.pt"
     pose_weight = "weights/yolov8s-pose.pt"
     lstm_weight = "weights/skeleton_lstm_best.pth"
-
     classes = ["normal", "fighting", "falling", "loitering"]
 
-    recognizer = RealtimeBehaviorRecognizer(
-        yolo_weight=yolo_weight,
+    recognizer = SimpleBehaviorRecognizer(
         pose_weight=pose_weight,
         lstm_weight=lstm_weight,
         classes=classes,
-        device="cuda",             # fallback sang CPU nếu không có
-        seq_len=20,
+        device="cuda",
+        seq_len=15,
         min_frames_for_decision=10
     )
 
-    # 0 = webcam; hoặc path đến file .mp4; hoặc rtsp url
-    source = 0
-
+    source = 0  # webcam
     recognizer.recognize_from_video(
         source=source,
         display=True,
