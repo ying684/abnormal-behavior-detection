@@ -30,6 +30,11 @@ def train_skeleton_model():
     train_loader = DataLoader(train_ds, batch_size=48, shuffle=True, num_workers=2)
     val_loader = DataLoader(val_ds, batch_size=48, shuffle=False, num_workers=2)
 
+    # Calculate class weights to handle imbalance
+    # From dataset analysis: normal=41.4%, fighting=35.1%, falling=18.4%, loitering=5.2%
+    class_weights = torch.tensor([1/0.414, 1/0.351, 1/0.184, 1/0.052], dtype=torch.float32).to(device)
+    class_weights = class_weights / class_weights.sum() * len(classes)  # Normalize
+    
     model = SkeletonLSTM(
         input_size=34,
         hidden_size=128,
@@ -38,9 +43,9 @@ def train_skeleton_model():
         dropout=0.2  # Dropout only works with num_layers >= 2
     ).to(device)
 
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(weight=class_weights)
     optimizer = AdamW(model.parameters(), lr=2e-3, weight_decay=1e-5)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=12, eta_min=1e-5)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=25, eta_min=1e-5)
 
     best_val_acc = 0.0
     weights_dir = Path("weights")

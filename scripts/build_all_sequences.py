@@ -17,7 +17,7 @@ def main():
         device="cuda"
     )
 
-    max_videos_per_class = 15  # Balance: 60 videos, ~350 samples, ~40 phút train
+    max_videos_per_class = 25  # Tăng lên để có đủ data, especially loitering
     
     for cls in classes:
         class_dir = root_raw / cls
