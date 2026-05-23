@@ -17,6 +17,8 @@ def main():
         device="cuda"
     )
 
+    max_videos_per_class = 15  # Balance: 60 videos, ~350 samples, ~40 phút train
+    
     for cls in classes:
         class_dir = root_raw / cls
         if not class_dir.exists():
@@ -26,12 +28,16 @@ def main():
         out_dir = Path("data/processed/sequences") / cls
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        for video_file in class_dir.glob("*.mp4"):
+        video_files = list(class_dir.glob("*.mp4"))[:max_videos_per_class]
+        print(f"[{cls}] Processing {len(video_files)}/{len(class_dir.glob('*.mp4'))} videos")
+        
+        for video_file in video_files:
             print(f"[{cls}] Processing {video_file.name}")
             builder.build_sequences_for_video(
                 video_path=str(video_file),
                 save_dir=str(out_dir),
                 min_len=20
+                # Bỏ max_len để giữ toàn bộ info, nhưng chia nhỏ sequences
             )
 
 if __name__ == "__main__":

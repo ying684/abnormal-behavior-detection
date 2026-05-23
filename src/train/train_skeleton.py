@@ -27,24 +27,25 @@ def train_skeleton_model():
         seq_len=20
     )
 
-    train_loader = DataLoader(train_ds, batch_size=32, shuffle=True, num_workers=2)
-    val_loader = DataLoader(val_ds, batch_size=32, shuffle=False, num_workers=2)
+    train_loader = DataLoader(train_ds, batch_size=48, shuffle=True, num_workers=2)
+    val_loader = DataLoader(val_ds, batch_size=48, shuffle=False, num_workers=2)
 
     model = SkeletonLSTM(
         input_size=34,
-        hidden_size=128,
-        num_layers=2,
+        hidden_size=96,
+        num_layers=1,
         num_classes=len(classes)
     ).to(device)
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
+    optimizer = AdamW(model.parameters(), lr=1.5e-3, weight_decay=1e-5)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
 
     best_val_acc = 0.0
     weights_dir = Path("weights")
     weights_dir.mkdir(parents=True, exist_ok=True)
 
-    num_epochs = 15  # đủ nhanh và hợp lý
+    num_epochs = 12  # Balance: nhanh + đủ để hội tụ
 
     for epoch in range(1, num_epochs+1):
         model.train()
@@ -82,7 +83,8 @@ def train_skeleton_model():
                 val_samples += x.size(0)
 
         val_acc = val_correct / val_samples if val_samples > 0 else 0.0
-        print(f"Epoch {epoch}/{num_epochs} | train loss {train_loss:.4f} acc {train_acc:.3f} | val acc {val_acc:.3f}")
+        scheduler.step()  # Update learning rate
+        print(f"Epoch {epoch}/{num_epochs} | train loss {train_loss:.4f} acc {train_acc:.3f} | val acc {val_acc:.3f} | lr {optimizer.param_groups[0]['lr']:.2e}")
 
         if val_acc > best_val_acc:
             best_val_acc = val_acc
