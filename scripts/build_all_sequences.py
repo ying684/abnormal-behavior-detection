@@ -1,10 +1,8 @@
 # scripts/build_all_sequences.py
-
 import sys
-from pathlib import Path
-
-# Add project root to path for imports (works both locally and in Colab)
-sys.path.insert(0, str(Path(__file__).parent))
+import os
+# Thêm thư mục gốc vào đường dẫn hệ thống của Python
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from pathlib import Path
 from src.data.sequence_builder import SequenceBuilder
