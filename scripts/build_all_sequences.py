@@ -17,7 +17,7 @@ def main():
         device="cuda"
     )
 
-    max_videos_per_class = 25  # Tăng lên để có đủ data, especially loitering
+    max_videos_per_class = 50  # Increased from 25 (will filter out bad quality ones)
     
     for cls in classes:
         class_dir = root_raw / cls
@@ -55,8 +55,7 @@ def main():
                 builder.build_sequences_for_video(
                     video_path=str(video_file),
                     save_dir=str(out_dir),
-                    min_len=20
-                    # Bỏ max_len để giữ toàn bộ info, nhưng chia nhỏ sequences
+                    min_len=30  # Increased from 20 for better quality
                 )
             except KeyboardInterrupt:
                 print(f"\n[INTERRUPTED] Saved {sum(len(list(Path('data/processed/sequences') / cls).glob('*.npy')) for cls in classes)} sequences total")

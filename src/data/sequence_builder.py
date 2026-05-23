@@ -62,7 +62,7 @@ class SequenceBuilder:
                         best_i = i
                         best_kp = p["keypoints"]
 
-                if best_kp is not None and best_i > 0.3:
+                if best_kp is not None and best_i > 0.5:
                     all_tracks[tid].append(best_kp)
                 else:
                     all_tracks[tid].append(None)
@@ -72,6 +72,15 @@ class SequenceBuilder:
         for tid, kp_list in all_tracks.items():
             T = len(kp_list)
             if T < min_len:
+                continue
+
+            # Count tracking losses (None values)
+            none_count = sum(1 for kp in kp_list if kp is None)
+            loss_rate = none_count / T
+            
+            # Skip sequences with >30% tracking loss (bad quality)
+            if loss_rate > 0.3:
+                print(f"  ⚠️ Skipped sequence (loss_rate={loss_rate:.1%} > 30%), length={T}")
                 continue
 
             kp_array = np.zeros((T, 17, 3), dtype=np.float32)
