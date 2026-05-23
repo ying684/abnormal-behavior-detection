@@ -1,0 +1,25 @@
+# Weights & Models
+weights/
+*.pt
+*.pth
+*.onnx
+
+# Data
+data/
+*.mp4
+*.avi
+*.npy
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.env
+venv/
+env/
+
+# IDEs & Notebooks
+.vscode/
+.idea/
+.ipynb_checkpoints/
