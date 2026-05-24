@@ -1,25 +1,128 @@
-# Weights & Models
-weights/
-*.pt
-*.pth
-*.onnx
+# Weights & Models (keep structure, ignore large files)
+weights/**/*.pth
+weights/**/*.pt
+weights/**/*.onnx
+weights/**/*.pkl
+!weights/detection/.gitkeep
+!weights/classification/.gitkeep
+!weights/classification/checkpoints/.gitkeep
 
-# Data
-data/
+# Data (all data files except structure)
+data/raw/**/*
+data/processed/**/*
+data/cache/**/*
+data/outputs/**/*
+data/logs/**/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/cache/.gitkeep
+!data/outputs/.gitkeep
+!data/logs/.gitkeep
+
+# Video files
 *.mp4
 *.avi
+*.mov
+*.mkv
+*.flv
 *.npy
+*.npz
 
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
-.env
-venv/
-env/
+*.egg
+*.egg-info/
+dist/
+build/
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
 
-# IDEs & Notebooks
+# Virtual Environment
+venv/
+ENV/
+env/
+.venv
+venv.bak/
+env.bak/
+
+# IDEs
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-workspace
+*.sublime-project
+
+# Jupyter Notebook
 .ipynb_checkpoints/
+*.ipynb
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+*.lock
+.DS_Store
+Thumbs.db
+
+# OS specific
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+desktop.ini
+
+# Docker
+docker-compose.override.yml
+.dockerignore
+
+# IDE
+*.vscode/
+.project
+.pydevproject
+.settings/
+*.iml
+.gradle
+.classpath
+
+# Node (if frontend build)
+node_modules/
+package-lock.json
+yarn.lock
+
+# Misc
+.vscode/settings.json
+*.bak
+*.swp
+*~
+.project
+.pydevproject
+
+# Large files
+*.tar
+*.tar.gz
+*.zip
+*.rar
+*.7z
