@@ -15,6 +15,45 @@ from config.settings import settings
 from core.detection.pose_estimator import PoseEstimator
 from core.models.lstm_skeleton import SkeletonLSTM
 
+def diagnose_camera():
+    """Diagnose available cameras and backends"""
+    print("\n" + "="*50)
+    print("CAMERA DIAGNOSTICS")
+    print("="*50)
+    
+    import time
+    available = []
+    
+    for idx in range(5):
+        try:
+            cap = cv2.VideoCapture(idx)
+            time.sleep(0.5)
+            ret, frame = cap.read()
+            if ret and frame is not None:
+                h, w = frame.shape[:2]
+                print(f"✓ Camera {idx}: {w}x{h}")
+                available.append(idx)
+            else:
+                print(f"✗ Camera {idx}: Opened but can't read frames")
+            cap.release()
+        except:
+            pass
+    
+    if not available:
+        print("\n⚠ No working cameras found!")
+        print("Troubleshooting:")
+        print("  1. Check if camera is connected and powered on")
+        print("  2. Restart your system or disconnect/reconnect camera")
+        print("  3. Check Device Manager for camera driver issues")
+        print("  4. Disable/enable camera in Device Settings")
+        print("  5. Try a different USB port")
+        print("  6. Check Windows Privacy settings (Settings > Privacy > Camera)")
+        return False
+    
+    print(f"\nAvailable cameras: {available}")
+    print("="*50 + "\n")
+    return True
+
 def preprocess_sequence(seq_kp, seq_len=20):
     """Preprocess keypoints sequence"""
     T = len(seq_kp)
@@ -60,6 +99,10 @@ def main():
     print("WEBCAM REALTIME DEMO")
     print("="*50)
     
+    # Diagnose camera before loading models
+    if not diagnose_camera():
+        return
+    
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Device: {device}")
     
@@ -81,15 +124,55 @@ def main():
     
     print("Models loaded!")
     
-    # Open webcam
+    # Open webcam with improved error handling
     print("\nOpening webcam...")
-    cap = cv2.VideoCapture(0)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    cap = None
     
-    if not cap.isOpened():
-        print("ERROR: Cannot open webcam!")
+    # Try multiple camera indices and backends
+    camera_indices = [0, 1, -1]  # 0=default, 1=alternate, -1=any available
+    
+    for idx in camera_indices:
+        try:
+            print(f"Trying camera index {idx}...")
+            cap = cv2.VideoCapture(idx)
+            
+            # Add delay for camera initialization
+            import time
+            time.sleep(1)
+            
+            # Test if we can actually read a frame
+            ret, test_frame = cap.read()
+            if ret and test_frame is not None:
+                print(f"Successfully opened camera {idx}")
+                break
+            else:
+                print(f"Camera {idx} opened but failed to read frame, trying next...")
+                cap.release()
+                cap = None
+        except Exception as e:
+            print(f"Failed to open camera {idx}: {e}")
+            if cap:
+                cap.release()
+            cap = None
+    
+    if cap is None:
+        print("ERROR: Cannot open any camera!")
+        print("Possible solutions:")
+        print("  1. Check if camera is connected")
+        print("  2. Check if another application is using the camera")
+        print("  3. Try using a video file instead: python -c \"cap = cv2.VideoCapture('video.mp4')\"")
         return
+    
+    # Configure camera with safe settings
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)  # Reduced for stability
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimize buffering
+    
+    # For Windows: Force DirectShow backend if possible
+    try:
+        cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)  # Disable autofocus for stability
+    except:
+        pass
     
     print("Webcam ready! Press ESC to quit")
     print("-"*50)
@@ -102,11 +185,30 @@ def main():
     fps = 0
     import time
     start_time = time.time()
+    consecutive_failures = 0
+    max_failures = 5  # Auto-reinitialize after this many consecutive failures
     
     while True:
         ret, frame = cap.read()
-        if not ret:
+        
+        if not ret or frame is None:
+            consecutive_failures += 1
+            if consecutive_failures > max_failures:
+                print(f"\nWarning: Camera not responding ({consecutive_failures} failures)")
+                print("Attempting to reinitialize camera...")
+                try:
+                    cap.release()
+                    time.sleep(1)
+                    cap = cv2.VideoCapture(0)
+                    time.sleep(1)
+                    consecutive_failures = 0
+                    print("Camera reinitialized")
+                except Exception as e:
+                    print(f"Failed to reinitialize: {e}")
+                    break
             continue
+        
+        consecutive_failures = 0  # Reset on successful read
         
         frame_count += 1
         current_time = time.time()
