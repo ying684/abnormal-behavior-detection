@@ -1,4 +1,4 @@
-# Weights & Models (keep structure, ignore large files)
+# Weights & Models
 weights/**/*.pth
 weights/**/*.pt
 weights/**/*.onnx
@@ -7,7 +7,7 @@ weights/**/*.pkl
 !weights/classification/.gitkeep
 !weights/classification/checkpoints/.gitkeep
 
-# Data (all data files except structure)
+# Data 
 data/raw/**/*
 data/processed/**/*
 data/cache/**/*
@@ -19,7 +19,7 @@ data/logs/**/*
 !data/outputs/.gitkeep
 !data/logs/.gitkeep
 
-# Video files
+# Video files & Tensors
 *.mp4
 *.avi
 *.mov
@@ -39,15 +39,9 @@ dist/
 build/
 .Python
 pip-log.txt
-pip-delete-this-directory.txt
 .tox/
 .coverage
-.coverage.*
 .cache
-nosetests.xml
-coverage.xml
-*.cover
-.hypothesis/
 .pytest_cache/
 
 # Virtual Environment
@@ -55,74 +49,26 @@ venv/
 ENV/
 env/
 .venv
-venv.bak/
-env.bak/
+miniconda3/
 
 # IDEs
 .vscode/
 .idea/
 *.swp
-*.swo
 *~
 .DS_Store
-*.sublime-workspace
-*.sublime-project
 
-# Jupyter Notebook
-.ipynb_checkpoints/
-*.ipynb
+# Streamlit
+.streamlit/
 
 # Environment variables
 .env
 .env.local
-.env.*.local
 
-# Temporary files
+# Temporary & OS files
 *.tmp
 *.temp
 *.log
 *.lock
-.DS_Store
 Thumbs.db
-
-# OS specific
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
 desktop.ini
-
-# Docker
-docker-compose.override.yml
-.dockerignore
-
-# IDE
-*.vscode/
-.project
-.pydevproject
-.settings/
-*.iml
-.gradle
-.classpath
-
-# Node (if frontend build)
-node_modules/
-package-lock.json
-yarn.lock
-
-# Misc
-.vscode/settings.json
-*.bak
-*.swp
-*~
-.project
-.pydevproject
-
-# Large files
-*.tar
-*.tar.gz
-*.zip
-*.rar
-*.7z

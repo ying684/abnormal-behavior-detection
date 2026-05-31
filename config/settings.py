@@ -23,9 +23,9 @@ class ModelConfig:
     
     # Model parameters
     input_size: int = 68
-    hidden_size: int = 256
+    hidden_size: int = 128
     num_layers: int = 2
-    num_classes: int = 4
+    num_classes: int = 3
     dropout: float = 0.3
     
     # Inference

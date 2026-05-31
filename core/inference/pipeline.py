@@ -1,188 +1,136 @@
 # core/inference/pipeline.py
 import cv2
-import numpy as np
 import torch
+import time
+import csv
+import numpy as np  # <-- ĐÃ FIX LỖI THIẾU NUMPY
+from datetime import datetime
 from collections import defaultdict, deque
-from typing import List, Tuple, Dict
+from typing import List
 
-from core.detection.tracker import PersonTracker
-from core.detection.pose_estimator import PoseEstimator
+from core.detection.pose_tracker import PoseTracker
 from core.models.lstm_skeleton import SkeletonLSTM
-
-def _iou(b1, b2):
-    x1 = max(b1[0], b2[0])
-    y1 = max(b1[1], b2[1])
-    x2 = min(b1[2], b2[2])
-    y2 = min(b1[3], b2[3])
-    inter = max(0, x2-x1) * max(0, y2-y1)
-    a1 = max(0, b1[2]-b1[0]) * max(0, b1[3]-b1[1])
-    a2 = max(0, b2[2]-b2[0]) * max(0, b2[3]-b2[1])
-    union = a1 + a2 - inter
-    if union <= 0:
-        return 0.0
-    return inter / union
+from core.inference.preprocessor import SequencePreprocessor
+from core.inference.postprocessor import BehaviorPostprocessor
+from config.settings import settings
 
 class RealtimeBehaviorRecognizer:
-    def __init__(self,
-                 yolo_weight: str,
-                 pose_weight: str,
-                 lstm_weight: str,
-                 classes: List[str],
-                 device: str = "cuda",
-                 seq_len: int = 20,
-                 min_frames_for_decision: int = 10):
+    def __init__(
+        self,
+        pose_weight: str,
+        lstm_weight: str,
+        classes: List[str] = ["normal", "fighting", "falling"],
+        device: str = "cuda",
+        seq_len: int = 30,
+        loitering_threshold_sec: float = 10.0
+    ):
         self.device = device if torch.cuda.is_available() else "cpu"
         self.classes = classes
-        self.seq_len = seq_len
-        self.min_frames_for_decision = min_frames_for_decision
-
-        self.tracker = PersonTracker(yolo_weight, self.device)
-        self.pose_model = PoseEstimator(pose_weight, self.device)
-
+        
+        self.tracker = PoseTracker(pose_weight, self.device)
+        self.preprocessor = SequencePreprocessor(seq_len=seq_len, device=self.device)
+        self.postprocessor = BehaviorPostprocessor(loitering_threshold_sec=loitering_threshold_sec)
+        
+        # <-- ĐÃ FIX: Khớp 100% với cấu trúc model lúc bạn train (128, 2, 3 class)
         self.model = SkeletonLSTM(
-            input_size=68,
-            hidden_size=256,
+            input_size=68, 
+            hidden_size=128, 
             num_layers=2,
-            num_classes=len(classes)
+            num_classes=3
         ).to(self.device)
         
-        # Load model with proper error handling
         try:
-            checkpoint = torch.load(lstm_weight, map_location=self.device, weights_only=False)
-            self.model.load_state_dict(checkpoint)
+            self.model.load_state_dict(torch.load(lstm_weight, map_location=self.device, weights_only=False))
+            print(f"✅ Loaded LSTM weights from {lstm_weight}")
         except Exception as e:
-            print(f"Warning: Failed to load checkpoint with weights_only=False: {e}")
-            print(f"Attempting to load with pickle_module...")
-            checkpoint = torch.load(lstm_weight, map_location=self.device)
-            self.model.load_state_dict(checkpoint)
+            print(f"❌ Failed to load LSTM weights: {e}")
+            
         self.model.eval()
 
-        self.track_skeletons = defaultdict(lambda: deque(maxlen=self.seq_len))
+        self.track_skeletons = defaultdict(lambda: deque(maxlen=seq_len))
+        self.track_start_times = {}
+        self.track_recent_preds = defaultdict(lambda: deque(maxlen=7))
 
-    def _preprocess_sequence(self, seq_kp: List[np.ndarray]) -> torch.Tensor:
-        """Chuyển sequence keypoints thành tensor 68 features"""
-        T = len(seq_kp)
-        arr = np.zeros((T, 17, 3), dtype=np.float32)
-        for i in range(T):
-            arr[i] = seq_kp[i]
+    def _setup_logger(self):
+        log_file = settings.data_dir / "logs" / f"realtime_log_{datetime.now().strftime('%Y%m%d')}.csv"
+        if not log_file.exists():
+            with open(log_file, mode='w', newline='') as f:
+                csv.writer(f).writerow(["Timestamp", "Track_ID", "Behavior", "Confidence"])
+        return log_file
 
-        seq_xy = arr[:, :, :2]
-        center = seq_xy.mean(axis=1, keepdims=True)
-        seq_rel = seq_xy - center
-        
-        scale = np.linalg.norm(seq_rel, axis=2).max()
-        if scale > 0:
-            seq_rel /= scale
-
-        if T >= 2:
-            velocity = np.zeros_like(seq_rel)
-            velocity[1:] = seq_rel[1:] - seq_rel[:-1]
-            velocity[0] = velocity[1]
-        else:
-            velocity = np.zeros_like(seq_rel)
-
-        if T < self.seq_len:
-            pad_len = self.seq_len - T
-            pad_xy = np.repeat(seq_rel[-1:], pad_len, axis=0)
-            pad_vel = np.zeros((pad_len, 17, 2))
-            seq_rel = np.concatenate([seq_rel, pad_xy], axis=0)
-            velocity = np.concatenate([velocity, pad_vel], axis=0)
-        elif T > self.seq_len:
-            seq_rel = seq_rel[-self.seq_len:]
-            velocity = velocity[-self.seq_len:]
-
-        seq_xy_flat = seq_rel.reshape(self.seq_len, -1)
-        vel_flat = velocity.reshape(self.seq_len, -1)
-        seq_flat = np.concatenate([seq_xy_flat, vel_flat], axis=1)
-
-        x = torch.from_numpy(seq_flat).float().unsqueeze(0).to(self.device)
-        return x
-
-    def recognize_from_video(self, source, display=True, save_output=None):
+    def recognize_from_video(self, source, display=True):
         cap = cv2.VideoCapture(source)
         if not cap.isOpened():
-            raise RuntimeError(f"Cannot open source: {source}")
+            print(f"Lỗi: Không thể mở video {source}")
+            return
+            
+        log_file = self._setup_logger()
 
-        writer = None
-        if save_output is not None:
-            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            fps = cap.get(cv2.CAP_PROP_FPS) or 25
-            w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            writer = cv2.VideoWriter(save_output, fourcc, fps, (w, h))
-
-        track_iter = self.tracker.track_stream(source)
-
-        while True:
+        while cap.isOpened():
             ret, frame = cap.read()
-            if not ret:
-                break
+            if not ret: break
 
-            try:
-                dets = next(track_iter)
-            except StopIteration:
-                break
+            current_time = time.time()
+            persons = self.tracker.track_frame(frame)
+            current_preds = {}
+            current_ids = [p["track_id"] for p in persons]
 
-            persons_pose = self.pose_model.estimate(frame)
-            current_preds: Dict[int, Tuple[str, float]] = {}
+            for tid in list(self.track_start_times.keys()):
+                if tid not in current_ids:
+                    del self.track_start_times[tid]
+                    if tid in self.track_recent_preds:
+                        del self.track_recent_preds[tid]
 
-            for d in dets:
-                tid = d["track_id"]
-                bbox = d["bbox"]
+            for p in persons:
+                tid = p["track_id"]
+                bbox = p["bbox"]
+                
+                if tid not in self.track_start_times:
+                    self.track_start_times[tid] = current_time
+                time_tracked = current_time - self.track_start_times[tid]
 
-                best_kp = None
-                best_i = 0.0
-                for p in persons_pose:
-                    i = _iou(bbox, p["bbox"])
-                    if i > best_i:
-                        best_i = i
-                        best_kp = p["keypoints"]
+                self.track_skeletons[tid].append(p["keypoints"])
+                label, conf = "...", 0.0
 
-                if best_kp is not None and best_i > 0.3:
-                    self.track_skeletons[tid].append(best_kp)
-
-                seq_kp = list(self.track_skeletons[tid])
-                if len(seq_kp) >= self.min_frames_for_decision:
-                    x = self._preprocess_sequence(seq_kp)
+                if len(self.track_skeletons[tid]) >= 15:
+                    x = self.preprocessor(list(self.track_skeletons[tid]))
+                    
                     with torch.no_grad():
                         logits = self.model(x)
                         probs = torch.softmax(logits, dim=1)[0].cpu().numpy()
-                        cls_id = int(np.argmax(probs))
-                        conf = float(probs[cls_id])
-                        label = self.classes[cls_id]
-                    current_preds[tid] = (label, conf)
-                else:
-                    current_preds[tid] = ("...", 0.0)
+                        cls_id = int(np.argmax(probs))  # NumPy giờ đã chạy ngon!
+                        raw_conf = float(probs[cls_id])
+                        raw_label = self.classes[cls_id]
+                        
+                    label, conf = self.postprocessor.process(
+                        raw_label, raw_conf, self.track_recent_preds[tid], time_tracked
+                    )
 
-            for d in dets:
-                tid = d["track_id"]
-                x1, y1, x2, y2 = d["bbox"]
-                label, conf = current_preds.get(tid, ("", 0.0))
+                current_preds[tid] = (label, conf, bbox)
 
+            for tid, (label, conf, bbox) in current_preds.items():
+                if label != "normal" and label != "...":
+                    with open(log_file, mode='a', newline='') as f:
+                        csv.writer(f).writerow([datetime.now().strftime('%Y-%m-%d %H:%M:%S'), tid, label, f"{conf:.2f}"])
+
+                x1, y1, x2, y2 = map(int, bbox)
                 color = (0, 255, 0)
-                if label == "fighting":
-                    color = (0, 0, 255)
-                elif label == "falling":
-                    color = (0, 165, 255)
-                elif label == "loitering":
-                    color = (255, 0, 0)
-
+                if label == "fighting": color = (0, 0, 255)
+                elif label == "falling": color = (0, 165, 255)
+                elif label == "loitering": color = (255, 0, 0)
+                
                 cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-                txt = f"ID {tid} | {label}"
-                if conf > 0:
-                    txt += f" ({conf:.2f})"
-                cv2.putText(frame, txt, (x1, y1 - 8),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                cv2.putText(frame, f"ID {tid} | {label} ({conf:.2f})", (x1, y1 - 8),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+                
+                kp = self.track_skeletons[tid][-1]
+                for px, py, conf_kp in kp:
+                    if conf_kp > 0.3:
+                        cv2.circle(frame, (int(px), int(py)), 3, color, -1)
 
             if display:
-                cv2.imshow("Realtime Behavior Recognition", frame)
-                if cv2.waitKey(1) & 0xFF == 27:
-                    break
-
-            if writer is not None:
-                writer.write(frame)
+                cv2.imshow("Realtime Behavior Analytics", frame)
+                if cv2.waitKey(1) & 0xFF == 27: break
 
         cap.release()
-        if writer is not None:
-            writer.release()
         cv2.destroyAllWindows()

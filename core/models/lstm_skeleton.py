@@ -1,41 +1,64 @@
 # core/models/lstm_skeleton.py
+
 import torch
 import torch.nn as nn
 
 class SkeletonLSTM(nn.Module):
-    def __init__(self,
-                 input_size: int = 68,  # 17 keypoints × 4 features
-                 hidden_size: int = 256,
-                 num_layers: int = 2,
-                 num_classes: int = 4,
-                 dropout: float = 0.3):
+    def __init__(
+        self,
+        input_size=68,
+        hidden_size=64,      # GIẢM TỪ 256 XUỐNG 64
+        num_layers=1,        # GIẢM TỪ 2 XUỐNG 1
+        num_classes=3,
+        dropout=0.5          # TĂNG DROPOUT LÊN 0.5 (Chống học vẹt)
+    ):
         super().__init__()
         
-        # Layer norm đầu vào
         self.layer_norm = nn.LayerNorm(input_size)
         
-        # LSTM bidirectional
+        # Conv1D cũng ép nhỏ lại
+        self.conv = nn.Conv1d(
+            in_channels=input_size, 
+            out_channels=64, 
+            kernel_size=3, 
+            padding=1
+        )
+        self.relu = nn.ReLU()
+
         self.lstm = nn.LSTM(
-            input_size=input_size,
+            input_size=64,
             hidden_size=hidden_size,
             num_layers=num_layers,
             batch_first=True,
-            dropout=dropout,
+            dropout=dropout if num_layers > 1 else 0,
             bidirectional=True
         )
-        
-        # FC layers
+
+        self.attention = nn.Sequential(
+            nn.Linear(hidden_size * 2, 64),
+            nn.Tanh(),
+            nn.Linear(64, 1)
+        )
+
         self.fc = nn.Sequential(
-            nn.Linear(hidden_size * 2, 128),  # 512 -> 128
+            nn.Linear(hidden_size * 2, 64),
             nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(128, num_classes)
+            nn.Dropout(0.6),
+            nn.Linear(64, num_classes)
         )
 
     def forward(self, x):
-        # x: (B,T,68)
         x = self.layer_norm(x)
-        out, _ = self.lstm(x)    # (B,T,512)
-        out = out.mean(dim=1)    # (B,512)
-        logits = self.fc(out)    # (B,4)
+        x = x.permute(0, 2, 1)
+        x = self.conv(x)
+        x = self.relu(x)
+        x = x.permute(0, 2, 1)
+
+        lstm_out, _ = self.lstm(x)
+
+        attention_scores = self.attention(lstm_out)
+        attention_weights = torch.softmax(attention_scores, dim=1)
+        context = torch.sum(lstm_out * attention_weights, dim=1)
+
+        logits = self.fc(context)
         return logits
